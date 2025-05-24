@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { ArrowLeft, RefreshCw, Search, MapPin, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ArrowLeft, RefreshCw, Search, MapPin, PanelLeftClose, PanelLeftOpen, Download, AlertTriangle, Info } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,9 @@ import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
+import { validateGeoJSON, sanitizeGeoJSON, generateSampleGeoJSON } from "@/utils/geojsonValidator";
 
 // Dynamically import the Map component to avoid SSR issues with Leaflet
 const MapComponent = dynamic(() => import("@/components/map-component"), {
@@ -35,7 +37,29 @@ export default function PetaPage() {
   const [geoJsonData, setGeoJsonData] = useState(null);
   const [filteredData, setFilteredData] = useState(null);
   const [locationTypes, setLocationTypes] = useState([]);
+  const [uploadErrors, setUploadErrors] = useState([]);
+  const [uploadWarnings, setUploadWarnings] = useState([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const mapContainerRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  // Handle window resize and mobile detection
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 640);
+    };
+
+    // Initial check
+    checkMobile();
+
+    // Add event listener
+    window.addEventListener("resize", checkMobile);
+
+    return () => {
+      window.removeEventListener("resize", checkMobile);
+    };
+  }, []);
 
   // Load default GeoJSON data
   useEffect(() => {
@@ -256,30 +280,101 @@ export default function PetaPage() {
     }
   }, [geoJsonData]);
 
-  // Handle file upload
-  const handleFileUpload = (event) => {
+  // Handle file upload with validation
+  const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
+
+    setIsUploading(true);
+    setUploadErrors([]);
+    setUploadWarnings([]);
+
+    // Check file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadErrors(["File terlalu besar. Maksimal ukuran file adalah 10MB."]);
+      setIsUploading(false);
+      return;
+    }
+
+    // Check file extension
+    const allowedExtensions = [".json", ".geojson"];
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf("."));
+    if (!allowedExtensions.includes(fileExtension)) {
+      setUploadErrors(["Format file tidak didukung. Gunakan file .json atau .geojson"]);
+      setIsUploading(false);
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const data = JSON.parse(e.target.result);
-        setGeoJsonData(data);
-        setFilteredData(data);
+        const rawData = JSON.parse(e.target.result);
+
+        // Validate the GeoJSON
+        const validation = validateGeoJSON(rawData);
+
+        if (!validation.isValid) {
+          setUploadErrors(validation.errors);
+          setUploadWarnings(validation.warnings);
+          setIsUploading(false);
+          return;
+        }
+
+        // Sanitize the data
+        const sanitizedData = sanitizeGeoJSON(rawData);
+
+        setGeoJsonData(sanitizedData);
+        setFilteredData(sanitizedData);
+        setUploadWarnings(validation.warnings);
+
         toast({
           title: "Data berhasil diupload",
-          description: `File ${file.name} berhasil dimuat.`,
+          description: `File ${file.name} berhasil dimuat dengan ${sanitizedData.features.length} lokasi.`,
         });
+
+        // Clear the file input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       } catch (error) {
-        toast({
-          title: "Error saat memproses file",
-          description: "File GeoJSON tidak valid.",
-          variant: "destructive",
-        });
+        console.error("Error parsing JSON:", error);
+        setUploadErrors(["File JSON tidak valid atau rusak. Pastikan file menggunakan format JSON yang benar."]);
+      } finally {
+        setIsUploading(false);
       }
     };
+
+    reader.onerror = () => {
+      setUploadErrors(["Gagal membaca file. Coba lagi dengan file yang berbeda."]);
+      setIsUploading(false);
+    };
+
     reader.readAsText(file);
+  };
+
+  // Download sample GeoJSON
+  const downloadSample = () => {
+    const sampleData = generateSampleGeoJSON();
+    const blob = new Blob([sampleData], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "sample-geojson.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast({
+      title: "Sample file downloaded",
+      description: "File contoh GeoJSON telah diunduh. Gunakan sebagai template untuk data Anda.",
+    });
+  };
+
+  // Clear upload errors/warnings
+  const clearUploadMessages = () => {
+    setUploadErrors([]);
+    setUploadWarnings([]);
   };
 
   // Apply filters and search
@@ -365,11 +460,11 @@ export default function PetaPage() {
     };
   }, []);
 
-  // Handle window resize
+  // Handle window resize for map container
   useEffect(() => {
     const handleResize = () => {
       if (mapContainerRef.current) {
-        const width = sidebarOpen && window.innerWidth >= 640 ? "calc(100% - 320px)" : "100%";
+        const width = sidebarOpen && !isMobile ? "calc(100% - 320px)" : "100%";
         mapContainerRef.current.style.width = width;
 
         // Trigger map resize
@@ -379,7 +474,15 @@ export default function PetaPage() {
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [sidebarOpen]);
+  }, [sidebarOpen, isMobile]);
+
+  // Calculate main container width
+  const getMainContainerWidth = () => {
+    if (sidebarOpen && !isMobile) {
+      return "calc(100% - 320px)";
+    }
+    return "100%";
+  };
 
   return (
     <div className="flex flex-col h-screen">
@@ -491,12 +594,56 @@ export default function PetaPage() {
             <Separator />
             <div className="space-y-4">
               <div>
-                <h2 className="text-lg font-semibold mb-2">Update Data</h2>
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-lg font-semibold">Update Data</h2>
+                  <Button variant="outline" size="sm" onClick={downloadSample}>
+                    <Download className="h-4 w-4 mr-1" />
+                    <span className="text-xs">Sample</span>
+                  </Button>
+                </div>
+
+                {/* Upload errors */}
+                {uploadErrors.length > 0 && (
+                  <Alert className="mb-3 border-red-200 bg-red-50">
+                    <AlertTriangle className="h-4 w-4 text-red-600" />
+                    <AlertDescription className="text-red-800">
+                      <div className="font-semibold mb-1">Error dalam file:</div>
+                      <ul className="text-xs space-y-1 max-h-32 overflow-y-auto">
+                        {uploadErrors.map((error, index) => (
+                          <li key={index}>• {error}</li>
+                        ))}
+                      </ul>
+                      <Button variant="ghost" size="sm" className="mt-2 h-6 text-xs text-red-700 hover:text-red-800" onClick={clearUploadMessages}>
+                        Tutup
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {/* Upload warnings */}
+                {uploadWarnings.length > 0 && uploadErrors.length === 0 && (
+                  <Alert className="mb-3 border-yellow-200 bg-yellow-50">
+                    <Info className="h-4 w-4 text-yellow-600" />
+                    <AlertDescription className="text-yellow-800">
+                      <div className="font-semibold mb-1">Peringatan:</div>
+                      <ul className="text-xs space-y-1">
+                        {uploadWarnings.map((warning, index) => (
+                          <li key={index}>• {warning}</li>
+                        ))}
+                      </ul>
+                      <Button variant="ghost" size="sm" className="mt-2 h-6 text-xs text-yellow-700 hover:text-yellow-800" onClick={clearUploadMessages}>
+                        Tutup
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 <div className="grid w-full max-w-sm items-center gap-1.5">
                   <Label htmlFor="geojson-upload">Upload GeoJSON</Label>
                   <div className="flex w-full items-center gap-2">
-                    <Input id="geojson-upload" type="file" accept=".json,.geojson" className="w-full" onChange={handleFileUpload} />
+                    <Input ref={fileInputRef} id="geojson-upload" type="file" accept=".json,.geojson" className="w-full" onChange={handleFileUpload} disabled={isUploading} />
                   </div>
+                  <p className="text-xs text-muted-foreground">Format: .json atau .geojson (max 10MB)</p>
                 </div>
               </div>
               <Button variant="outline" className="w-full" onClick={resetFilters}>
@@ -511,13 +658,47 @@ export default function PetaPage() {
               </h3>
               <p className="text-xs text-blue-600 mt-1">Klik tombol lokasi di peta untuk menemukan lokasi Anda dan melihat rute ke pangkalan terdekat.</p>
             </div>
+
+            {/* Format requirements info */}
+            <div className="p-3 bg-gray-50 rounded-md border border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">Format Data yang Diperlukan:</h3>
+              <ul className="text-xs text-gray-600 space-y-1">
+                <li>
+                  • <strong>nama_lokasi:</strong> Nama lokasi (teks)
+                </li>
+                <li>
+                  • <strong>jenis_lokasi:</strong> Terminal, Mall, Minimarket, dll.
+                </li>
+                <li>
+                  • <strong>jam_ramainya:</strong> Format "HH:MM - HH:MM"
+                </li>
+                <li>
+                  • <strong>tingkat_kepadatan:</strong> Angka 1-5
+                </li>
+                <li>
+                  • <strong>tingkat_keamanan:</strong> Angka 1-5
+                </li>
+                <li>
+                  • <strong>akses_internet:</strong> Angka 1-5
+                </li>
+                <li>
+                  • <strong>kenyamanan:</strong> Angka 1-5
+                </li>
+                <li>
+                  • <strong>fasilitas:</strong> Deskripsi fasilitas (teks)
+                </li>
+                <li>
+                  • <strong>alamat:</strong> Alamat lengkap (teks)
+                </li>
+              </ul>
+            </div>
           </div>
         </aside>
         <main
           ref={mapContainerRef}
           className="flex-1 overflow-hidden w-full h-full"
           style={{
-            width: sidebarOpen ? (window.innerWidth < 640 ? "100%" : "calc(100% - 320px)") : "100%",
+            width: getMainContainerWidth(),
             transition: "width 0.3s ease",
             position: "relative",
             zIndex: 1,

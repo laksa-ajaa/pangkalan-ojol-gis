@@ -27,6 +27,7 @@ export default function Home() {
                   <p className="max-w-[600px] text-gray-500 md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed">
                     Temukan lokasi pangkalan ojek online terbaik berdasarkan berbagai kriteria seperti kepadatan, keamanan, dan fasilitas.
                   </p>
+                  <p className="max-w-[600px] text-gray-500 md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed">Created by Laksmana Chairutama (2205181045)</p>
                 </div>
                 <div className="flex flex-col gap-2 min-[400px]:flex-row">
                   <Link href="/peta">

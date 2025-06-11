@@ -132,8 +132,6 @@ function LocationAndRouting({ userLocation, markers, setSelectedMarker }) {
 
 // Update the MapControls component to position the "My Location" button on the left side
 function MapControls({ onLocateMe }) {
-  const map = useMap();
-
   return (
     <div className="absolute top-4 left-4 z-[1000] flex flex-col gap-2">
       <TooltipProvider>
@@ -186,7 +184,7 @@ function LayerControl() {
         }
       });
     };
-  }, []);
+  }, [map]);
 
   const changeLayer = (layerName) => {
     // Remove all layers
